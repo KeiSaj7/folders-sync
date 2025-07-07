@@ -87,6 +87,9 @@ def fetch_args() -> tuple:
         return (None, None, None, None, None)
     try:
         src_root_path = sys.argv[1]
+        if not os.path.exists(src_root_path):
+            print("Provided source path doesn't exist")
+            return (None, None, None, None, None)
         rep_root_path = sys.argv[2]
         interval = int(sys.argv[3]) # in seconds
         amount = int(sys.argv[4])
