@@ -1,115 +1,151 @@
-import sys
 import os
 import shutil
 import hashlib
 import time
 import logging
+import argparse
 
-def compare(path: str, dirs: list[str], files: list[str], rep_path: str) -> None:
-    if os.path.exists(rep_path):
-        rep = (rep_path, [dir for dir in os.listdir(rep_path) if os.path.isdir(os.path.join(rep_path, dir))], [file for file in os.listdir(rep_path) if os.path.isfile(os.path.join(rep_path, file))])
-        compare_dirs(rep_path, set(dirs), set(rep[1]))
-        compare_files(path, rep_path, set(files), set(rep[2]))
-    else:
-        shutil.copytree(path, rep_path)
-        walk = os.walk(rep_path)
-        for path, dirs, files in walk:
-            files = [f for f in files]
-            logger.info(f"[CREATE] Created {path} and its files: {files}")
-    return
+class sync():
 
-def compare_dirs(rep_path: str, src_dirs: set, rep_dirs: set) -> None:
-    to_remove = rep_dirs.difference(src_dirs)
-    for dir in to_remove:
-        path = os.path.join(rep_path, dir)
-        walk = os.walk(path)
-        for path, dirs, files in walk:
-            files = [f for f in files]
-            logger.info(f"[REMOVE] Removed {path} and its files: {files}")
-        shutil.rmtree(path)
-    return
+    def __init__(self, src_root_path, rep_root_path, interval, amount, log_path: str):
+        self.src_root_path = src_root_path
+        self.rep_root_path = rep_root_path
+        self.interval = interval
+        self.amount = amount
+        self.log_path = log_path
 
-def compare_files(src_path: str, rep_path: str, src_files: set, rep_files: set) -> None:
-    for file in src_files:
-        if file in rep_files:
-            verify_content(src_path, rep_path, file)
+        self.path = None
+        self.dirs = None
+        self.files = None
+        self.rep_path = None
+
+        self.logger = logging.getLogger('sync_logger')
+        self.initialize_logger()
+
+    def initialize_logger(self) -> None:
+        self.logger.setLevel(logging.INFO)
+    
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s', 
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+
+        logs_handler = logging.FileHandler(self.log_path)
+        logs_handler.setFormatter(formatter)
+
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+
+        self.logger.addHandler(logs_handler)
+        self.logger.addHandler(console_handler)
+
+    def log(self, msg) -> None:
+            self.logger.info(msg)
+
+    def assign_walk_values(self, path: str, dirs: list[str], files: list[str]) -> None:
+        self.path = path
+        self.dirs = dirs
+        self.files = files
+        self.rep_path = path.replace(self.src_root_path, self.rep_root_path)
+
+
+    def compare_dirs(self) -> None:
+        if os.path.exists(self.rep_path):
+            rep = (self.rep_path, [dir for dir in os.listdir(self.rep_path) if os.path.isdir(os.path.join(self.rep_path, dir))], [file for file in os.listdir(self.rep_path) if os.path.isfile(os.path.join(self.rep_path, file))])
+            src_dirs = set(self.dirs)
+            rep_dirs = set(rep[1])
+            to_remove = rep_dirs.difference(src_dirs)
+            for dir in to_remove:
+                path = os.path.join(self.rep_path, dir)
+                walk = os.walk(path)
+                for path, dirs, files in walk:
+                    files = [f for f in files]
+                    abspath = os.path.abspath(path)
+                    self.log(f"[REMOVE] Removed {abspath} and its files: {files}")
+                shutil.rmtree(path)
+            self.compare_files(set(rep[2]))
         else:
-            src = os.path.join(src_path, file)
-            dest = os.path.join(rep_path, file)
+            shutil.copytree(self.path, self.rep_path)
+            walk = os.walk(self.rep_path)
+            for path, dirs, files in walk:
+                files = [f for f in files]
+                abspath = os.path.abspath(path)
+                self.log(f"[CREATE] Created {abspath} and its files: {files}")
+        return
+
+    def compare_files(self, rep_files: set) -> None:
+        src_files = set(self.files)
+        for file in src_files:
+            if file in rep_files:
+                self.verify_content(file)
+            else:
+                src = os.path.join(self.path, file)
+                dest = os.path.join(self.rep_path, file)
+                shutil.copyfile(src, dest)
+                rep_files.add(file)
+                abspath = os.path.abspath(dest)
+                self.log(f"[CREATE] {abspath} has been created")
+        to_remove = rep_files.difference(src_files)
+        for file in to_remove:
+            path = os.path.join(self.rep_path, file)
+            os.remove(path)
+            abspath = os.path.abspath(path)
+            self.log(f"[REMOVE] {abspath} has been removed")
+        return
+
+    def verify_content(self, file: str) -> None:
+        src_hash = self.calculate_md5(f'{self.path}/{file}')
+        rep_hash = self.calculate_md5(f'{self.rep_path}/{file}')
+        if src_hash != rep_hash:
+            src = os.path.join(self.path, file)
+            dest = os.path.join(self.rep_path, file)
             shutil.copyfile(src, dest)
-            rep_files.add(file)
-            logger.info(f"[CREATE] {dest} has been created")
-    to_remove = rep_files.difference(src_files)
-    for file in to_remove:
-        path = os.path.join(rep_path, file)
-        os.remove(path)
-        logger.info(f"[REMOVE] {path} has been removed")
-    return
+            src_abspath = os.path.abspath(src)
+            dest_abspath = os.path.abspath(dest)
+            self.log(f"[COPY] {src_abspath} has been copied to {dest_abspath}")
+        return
 
-def verify_content(src_path: str, rep_path: str, file: str) -> None:
-    src_hash = calculate_md5(f'{src_path}/{file}')
-    rep_hash = calculate_md5(f'{rep_path}/{file}')
-    if src_hash != rep_hash:
-        src = os.path.join(src_path, file)
-        dest = os.path.join(rep_path, file)
-        shutil.copyfile(src, dest)
-        logger.info(f"[COPY] {src} has been copied to {dest}")
-    return
+    def calculate_md5(self, file_path: str) -> str:
+        hasher = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b''):
+                hasher.update(chunk)
+        return hasher.hexdigest()
 
-def calculate_md5(file_path: str) -> str:
-    hasher = hashlib.md5()
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b''):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    def sync(self):
+        print("Starting synchronization program...")
+        for i in range(self.amount):
+            source = os.walk(self.src_root_path)
+            print(f"Starting synchronization num {i+1}")
+            for path, dirs, files in source:
+                self.assign_walk_values(path, dirs, files)
+                self.compare_dirs()
+            print(f"Synchronization num {i+1} completed")
+            if i == self.amount-1:
+                break
+            time.sleep(self.interval)
+        print("All synchronizations completed")
+
+def is_dir(path: str) -> str:
+    if not os.path.isdir(path):
+        raise argparse.ArgumentTypeError(f"{path} is not a valid directory")
+    return path
+
+def is_file(path: str) -> str:
+    if not os.path.isfile(path):
+        raise argparse.ArgumentTypeError(f"{path} is not a valid file")
+    return path
+
 
 def main():
-    src_root_path, rep_root_path, interval, amount, log_path = fetch_args()
-    if None in (src_root_path, rep_root_path, interval, amount, log_path):
-        return
-    set_logger(log_path)
-    print("Starting synchronization program...")
-    for i in range(amount):
-        source = os.walk(src_root_path)
-        print(f"Starting synchronization num {i+1}")
-        for path, dirs, files in source:
-            rep_path = path.replace(src_root_path, rep_root_path)
-            compare(path, dirs, files, rep_path)
-        print(f"Synchronization num {i+1} completed")
-        if i == amount-1:
-            break
-        time.sleep(interval)
-    print("All synchronizations completed")
-
-def fetch_args() -> tuple:
-    if len(sys.argv) != 6:
-        print("Provided wrong number of arguments!")
-        return (None, None, None, None, None)
-    try:
-        src_root_path = sys.argv[1]
-        if not os.path.exists(src_root_path):
-            print("Provided source path doesn't exist")
-            return (None, None, None, None, None)
-        rep_root_path = sys.argv[2]
-        interval = int(sys.argv[3]) # in seconds
-        amount = int(sys.argv[4])
-        log_path = sys.argv[5]
-    except:
-        print("Provided wrong arguments!")
-        return (None, None, None, None, None)
-    return (src_root_path, rep_root_path, interval, amount, log_path)
-
-def set_logger(log_path: str) -> None:
-    global logger
-    logger = logging.getLogger('sync_logger')
-    logging.basicConfig(
-        format = '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt = '%Y-%m-%d %H:%M:%S',
-        level = logging.INFO,
-            handlers = [
-        logging.FileHandler(log_path),
-        logging.StreamHandler()
-        ]
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument('src_root_path', type=is_dir, help='Path to source directory')
+    parser.add_argument('rep_root_path', type=is_dir, help='Path to replica directory')
+    parser.add_argument('interval', type=int, help='Interval between synchronizations in seconds')
+    parser.add_argument('amount', type=int, help='Number of synchronizations to perform')
+    parser.add_argument('log_path', type=is_file, help='Path to the log file')
+    args = parser.parse_args()
+    sync_instance = sync(args.src_root_path, args.rep_root_path, args.interval, args.amount, args.log_path)
+    sync_instance.sync()
 
 main()
