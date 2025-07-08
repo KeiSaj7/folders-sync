@@ -5,7 +5,7 @@ import time
 import logging
 import argparse
 
-class sync():
+class Sync():
 
     def __init__(self, src_root_path, rep_root_path, interval, amount, log_path: str):
         self.src_root_path = src_root_path
@@ -48,12 +48,10 @@ class sync():
         self.files = files
         self.rep_path = path.replace(self.src_root_path, self.rep_root_path)
 
-
     def compare_dirs(self) -> None:
         if os.path.exists(self.rep_path):
-            rep = (self.rep_path, [dir for dir in os.listdir(self.rep_path) if os.path.isdir(os.path.join(self.rep_path, dir))], [file for file in os.listdir(self.rep_path) if os.path.isfile(os.path.join(self.rep_path, file))])
             src_dirs = set(self.dirs)
-            rep_dirs = set(rep[1])
+            rep_dirs = set(dir for dir in os.listdir(self.rep_path) if os.path.isdir(os.path.join(self.rep_path, dir)))
             to_remove = rep_dirs.difference(src_dirs)
             for dir in to_remove:
                 path = os.path.join(self.rep_path, dir)
@@ -63,7 +61,8 @@ class sync():
                     abspath = os.path.abspath(path)
                     self.log(f"[REMOVE] Removed {abspath} and its files: {files}")
                 shutil.rmtree(path)
-            self.compare_files(set(rep[2]))
+            rep_files = set(file for file in os.listdir(self.rep_path) if os.path.isfile(os.path.join(self.rep_path, file)))
+            self.compare_files(rep_files)
         else:
             shutil.copytree(self.path, self.rep_path)
             walk = os.walk(self.rep_path)
@@ -71,7 +70,6 @@ class sync():
                 files = [f for f in files]
                 abspath = os.path.abspath(path)
                 self.log(f"[CREATE] Created {abspath} and its files: {files}")
-        return
 
     def compare_files(self, rep_files: set) -> None:
         src_files = set(self.files)
@@ -91,7 +89,6 @@ class sync():
             os.remove(path)
             abspath = os.path.abspath(path)
             self.log(f"[REMOVE] {abspath} has been removed")
-        return
 
     def verify_content(self, file: str) -> None:
         src_hash = self.calculate_md5(f'{self.path}/{file}')
@@ -103,7 +100,6 @@ class sync():
             src_abspath = os.path.abspath(src)
             dest_abspath = os.path.abspath(dest)
             self.log(f"[COPY] {src_abspath} has been copied to {dest_abspath}")
-        return
 
     def calculate_md5(self, file_path: str) -> str:
         hasher = hashlib.md5()
@@ -112,7 +108,7 @@ class sync():
                 hasher.update(chunk)
         return hasher.hexdigest()
 
-    def sync(self):
+    def start_sync(self) -> None:
         print("Starting synchronization program...")
         for i in range(self.amount):
             source = os.walk(self.src_root_path)
@@ -132,20 +128,32 @@ def is_dir(path: str) -> str:
     return path
 
 def is_file(path: str) -> str:
-    if not os.path.isfile(path):
-        raise argparse.ArgumentTypeError(f"{path} is not a valid file")
-    return path
+    if not os.path.exists(path):
+        raise argparse.ArgumentTypeError(f"{path} doesn't exist")
+    log_path = os.path.join(path, ".LOG")
+    return log_path
+
+def is_negative_int(val: str) -> int:
+    try:
+        int_val = int(val)
+    except:
+        raise argparse.ArgumentTypeError(f"Interval/amount must be a positive integer")
+        
+    if int_val < 0:
+        raise argparse.ArgumentTypeError(f"Interval/amount must be a positive integer")
+    
+    return int_val
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('src_root_path', type=is_dir, help='Path to source directory')
     parser.add_argument('rep_root_path', type=is_dir, help='Path to replica directory')
-    parser.add_argument('interval', type=int, help='Interval between synchronizations in seconds')
-    parser.add_argument('amount', type=int, help='Number of synchronizations to perform')
+    parser.add_argument('interval', type=is_negative_int, help='Interval between synchronizations in seconds')
+    parser.add_argument('amount', type=is_negative_int, help='Number of synchronizations to perform')
     parser.add_argument('log_path', type=is_file, help='Path to the log file')
     args = parser.parse_args()
-    sync_instance = sync(args.src_root_path, args.rep_root_path, args.interval, args.amount, args.log_path)
-    sync_instance.sync()
+    sync_instance = Sync(args.src_root_path, args.rep_root_path, args.interval, args.amount, args.log_path)
+    sync_instance.start_sync()
 
 main()
