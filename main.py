@@ -130,7 +130,10 @@ def is_dir(path: str) -> str:
 def is_file(path: str) -> str:
     if not os.path.exists(path):
         raise argparse.ArgumentTypeError(f"{path} doesn't exist")
-    log_path = os.path.join(path, ".LOG")
+    if not os.path.isfile(path):
+        log_path = os.path.join(path, ".LOG")
+    else:
+        log_path = path
     return log_path
 
 def is_negative_int(val: str) -> int:
